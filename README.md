@@ -147,17 +147,7 @@ Greedy tool-call counts vs gold before training.
 
 After DPO, action tools rise and lookups fall (Brightline change_flight ~8 vs gold 2, lookup_pnr ~0 vs gold 4; Harbor lookup_account ~0 vs gold 4).
 
-Key transition cells: exact→exact 13; exact→wrong tool 2; policy→policy 26; policy→empty 2; policy→exact 0; wrong tool→exact 22; wrong tool→policy 9; wrong tool→wrong 18; wrong tool→empty 2; empty→wrong tool 2. After exact 35 = 13 + 22; after policy 35 = 26 + 9.
 
-### Brightline F1
-
-Brightline F1 fell from 0.60 to 0.38 while exact rose from 0.00 to 0.38. Before, many plans mixed a lookup with other tools, so set-overlap F1 looked decent with zero exact. After, wrong_seq is 0.00 and policy is 0.62: the plan is either the correct lookup or only the gated action (change_flight / refund_ticket), which shares no tool with gold `lookup_pnr`. Tool-call chart after DPO: Brightline change_flight about 8 calls vs gold 2, refund_ticket about 6 vs gold 2, lookup_pnr about 0 vs gold 4.
-
-### If you care about policy
-
-The signal for “do not fire the gated tool yet” is 43 policy_breach rejections plus extra_tool (87), against 85 wrong_tool, 94 foreign_tool, 89 invented_arg, and 86 empty_steps that teach naming a catalog tool. Twenty-six of twenty-eight policy failures stayed; nine wrong-tool rows became policy. The counts imply tool naming beat gate obedience on this mix.
-
-Notebook examples (only Parcel tracking stayed exact): Northwind refund Z910 — gold `lookup_order`, before empty, after `ask_user`. Harbor “Transfer 40 USD from ACCT-910 to ACCT-980” — gold `lookup_account`, before check_balance then transfer, after empty. Brightline PNR-910 — gold `lookup_pnr`, before ask_user then lookup_pnr, after change_flight with empty observations. Lumen ivy@lumen.example — gold `lookup_user`, policy before and after. Cedar POL-910 — gold `lookup_policy`, wrong_seq before and after. Parcel SHP-910 — gold `track_shipment`, exact throughout.
 
 ## Metrics the notebook reports
 

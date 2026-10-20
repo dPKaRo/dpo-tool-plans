@@ -1,6 +1,6 @@
 # DPO on enterprise tool plans: Experiment with DPO
 
-## Preface: Why general-purpose LLMs do wasteful planning work, and how DPO + LoRA fixes it
+# Exercise to learn DPO on LLMs.
 
 ### 1. The problem: How to customize General Purpose LLMs on grounded Tools in Enterprises
 

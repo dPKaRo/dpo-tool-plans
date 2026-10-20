@@ -1,0 +1,8 @@
+# Colab T4 is the supported path. The notebook's first cell installs these.
+transformers
+trl
+peft
+datasets
+accelerate
+matplotlib
+torch

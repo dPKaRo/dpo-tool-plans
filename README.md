@@ -2,16 +2,18 @@
 
 ## Preface: Why general-purpose LLMs do wasteful planning work, and how DPO + LoRA fixes it
 
-### 1. The problem: general-purpose LLMs are not built for the agent planning stage
+### 1. The problem: How to customize General Purpose LLMs on grounded Tools in Enterprises
+
 In a production AI agent, the **planning stage** sits between the user request and tool execution. It reads the enterprise tool catalog, company policy, and current observations, then outputs a structured plan (`{goal, steps, stop_when}`) without executing the tools itself.
 
 General-purpose instruction-tuned LLMs are trained to be helpful and complete in a single conversational turn. When placed into a multi-step planning loop, that bias creates two expensive failure modes:
-- **Wasteful work (`wrong_seq` — 53% of held-out prompts before tuning):** The model schedules redundant or out-of-order steps instead of the minimal legal lookup—calling `check_coverage` and `file_claim` before `lookup_policy`, pairing `lookup_order` with `check_inventory`, or calling `ask_user` before `lookup_pnr` when the record id is already in the prompt. Every extra step burns latency, API budget, and context window.
+
+- **Wasteful work (`wrong_seq` — 53% of held-out prompts before tuning ):** The model schedules redundant or out-of-order steps instead of the minimal legal lookup—calling `check_coverage` and `file_claim` before `lookup_policy`, pairing `lookup_order` with `check_inventory`, or calling `ask_user` before `lookup_pnr` when the record id is already in the prompt. Every extra step burns latency, API budget, and context window.
 - **Premature execution (`policy` — 29% before tuning):** When observations are empty, the model skips the lookup and fires high-stakes actions (`issue_refund`, `transfer`, `change_flight`, `reset_password`), or chains the lookup and the gated action in the same plan before seeing what the lookup returns.
 
-Prompt engineering and Supervised Fine-Tuning (SFT) show the model what a valid plan looks like, but SFT only increases the likelihood of the gold string. It never shows the model the specific wasteful near-miss it wants to generate on that exact prompt and pushes that plan down.
 
 ### 2. What DPO (Direct Preference Optimization) is
+
 Classical RLHF fixes bad generations by training a separate reward model and running online reinforcement learning (PPO/GRPO) over live sampled rollouts—an expensive pipeline to tune and maintain.
 
 **Direct Preference Optimization (DPO)** eliminates both the separate reward model and the online rollout loop. Using a closed-form mapping between an optimal policy $\pi_\theta$ and its implicit reward relative to a frozen reference policy $\pi_{\mathrm{ref}}$, DPO turns alignment into a supervised binary cross-entropy loss over triples $(x, y^+, y^-)$:
@@ -23,7 +25,7 @@ $$\mathcal{L}_{\text{DPO}}(\theta) = -\log \sigma\left(\beta\left[\log\frac{\pi_
 
 The term inside the brackets is the **implicit reward margin**: how much more probability mass $\pi_\theta$ assigns to the legal plan $y^+$ over the flawed plan $y^-$, compared with the starting model $\pi_{\mathrm{ref}}$. Because any shared prefix between $y^+$ and $y^-$ cancels out in the subtraction, DPO concentrates its gradient on the exact token where the good plan and the wasteful or illegal plan diverge.
 
-### 3. Why add a LoRA connector
+### 3. LoRA connector
 **LoRA (Low-Rank Adaptation)** freezes the base LLM (`Qwen/Qwen2.5-1.5B-Instruct`, 1,548,072,448 parameters) and attaches small trainable rank-16 matrices ($\alpha=32$) to the attention projections (`q_proj`, `k_proj`, `v_proj`, `o_proj`), updating **4,358,144 parameters (0.2815%)**.
 
 In a DPO workflow, the LoRA connector provides two architectural advantages:
@@ -31,11 +33,9 @@ In a DPO workflow, the LoRA connector provides two architectural advantages:
 2. **Multi-tenant routing with a single base model:** Because the LoRA connector is a ~17 MB adapter on top of frozen weights and each company's tool catalog is passed in the prompt, one small base model can serve multiple enterprise domains (or swap domain-specific LoRA connectors on demand) without hosting separate full models.
 
 ### 4. How DPO improves agent planning here—and what the metrics actually mean
-Instead of paying humans to label preference pairs, this lab pairs a **deterministic plan checker** (`format → empty → catalog → policy → grounding → selection`) with controlled failure mutations across six companies (540 train pairs, 96 held-out eval prompts).
+Instead of paying humans to label preference pairs, this lab pairs a **deterministic plan checker** (`format → empty → catalog → policy → grounding → selection`) with controlled failure mutations across six companies (540 train pairs, 96 held-out eval prompts). 
 
 - **Cutting wasteful work works immediately:** Greedy held-out **wrong-tool / wasteful-sequence errors fell from 51/96 (0.53) to 22/96 (0.23)**, and **exact match more than doubled from 15/96 (0.16) to 35/96 (0.36)**. Twenty-two wrong-sequence prompts flipped directly into exact matches. **Ungrounded arguments stayed at 0%.**
-- **Why offline DPO telemetry is not enough:** Training reward accuracy hit **`1.000` by step 10** (margin **`11.417 → 12.149`**), yet held-out **policy breaches rose from 28/96 (0.29) to 35/96 (0.36)**—**26 of 28** stayed policy breaches, and **9** wrong-sequence prompts became policy breaches—because only **`43 of 540`** pairs contrasted a bare policy breach against a lookup.
-- **Empty plans (`empty_steps`):** A small edge case (**2/96 before, 4/96 after**). Shared-prefix cancellation means DPO only trains where $y^+$ and $y^-$ diverge; `empty_steps` belongs on the **rejected** side so the model gets gradient toward opening a real step when the legal plan has one.
 
 The full method walkthrough is in [docs/blog.md](docs/blog.md). The sections below cover the checker order, the shared-prefix DPO trap, the lab setup, and the held-out transition matrix.
 
@@ -70,21 +70,9 @@ sequenceDiagram
   Note over C,R: Gradient from first tool name onward
 ```
 
-Simplified sketch:
-
-```json
-// chosen
-{"goal":"...", "steps":[{"tool":"lookup_order", "args":{...}, "because":"..."}], "stop_when":"..."}
-
-// rejected — identical through [{"tool":
-{"goal":"...", "steps":[{"tool":"issue_refund", "args":{...}, "because":"..."}], "stop_when":"..."}
-```
-
-An earlier pair file shared that prefix whenever both plans opened a step, so opening a step got no gradient. The pairs that differed there had an empty chosen plan, so the update favored an empty list, and reward accuracy still hit 1.0 on the written strings. In this repo `empty_steps` is a rejected plan, every chosen plan has at least one step, and the prompt shows one example step. The base model already calls tools before DPO (exact 0.16, empty 0.02).
-
 ## The lab
 
-The model writes a plan; it does not run tools. Six companies share the eval split: Northwind Retail, Harbor Bank, Brightline Air, Lumen IT, Cedar Insurance, ParcelPath. `enterprise_pairs.jsonl` has 636 rows (540 train, 96 eval), 90 train and 16 eval per company. Eval ids (Z910, ACCT-910, PNR-910, ivy@lumen.example, POL-910, SHP-910) never appear in train.
+The model writes a plan; it does not run tools. Six fictious companies share the eval split: Northwind Retail, Harbor Bank, Brightline Air, Lumen IT, Cedar Insurance, ParcelPath. `enterprise_pairs.jsonl` has 636 rows (540 train, 96 eval), 90 train and 16 eval per company. Eval ids (Z910, ACCT-910, PNR-910, ivy@lumen.example, POL-910, SHP-910) never appear in train.
 
 Train rejected-plan mutation counts: policy_breach 43, wrong_tool 85, foreign_tool 94, extra_tool 87, invented_arg 89, empty_steps 86, unnecessary_ask 56.
 
@@ -96,11 +84,10 @@ Train rejected-plan mutation counts: policy_breach 43, wrong_tool 85, foreign_to
 - DPO sigmoid, beta 0.1, lr 5e-5, 2 epochs, batch 2, grad accum 4, max_length 1024, max_prompt_length 768
 - 136 steps, train_runtime 997.1 s, train_loss 0.0524
 - Eval reward accuracy 1.000 at epoch 1 and 2; eval margin 11.417 then 12.149
-- Colab Tesla T4, compute capability 7.5, native float16 (`bf16` false, 14.6 GiB). `torch.cuda.is_bf16_supported()` is true on T4 via emulation; hardware bf16 starts at compute capability 8—this run forced fp16.
 
 Loss falls from about 0.58 to near 0 by step 40 and stays there; reward accuracy hits 1.0 by about step 10; margin climbs to about 12.
 
-**Run:** Colab T4 → open `enterprise_tool_dpo.ipynb` → Runtime → GPU → Run all. Pairs path: `enterprise_pairs.jsonl`.
+**Run:** Colab T4 → open `enterprise_tool_dpo.ipynb`. Pairs path: `enterprise_pairs.jsonl`.
 
 **Generation eval:** greedy decode, max_new_tokens 180, batch 8, same 96 prompts before and after adapter load.
 

@@ -1,4 +1,4 @@
-# DPO on enterprise tool plans: when reward accuracy saturates before exact match
+# DPO on enterprise tool plans: Experiment with DPO
 
 ## Preface: Why general-purpose LLMs do wasteful planning work, and how DPO + LoRA fixes it
 

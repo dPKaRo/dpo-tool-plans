@@ -37,7 +37,7 @@ Instead of paying humans to label preference pairs, this lab pairs a **determini
 
 - **Cutting wasteful work works immediately:** Greedy held-out **wrong-tool / wasteful-sequence errors fell from 51/96 (0.53) to 22/96 (0.23)**, and **exact match more than doubled from 15/96 (0.16) to 35/96 (0.36)**. Twenty-two wrong-sequence prompts flipped directly into exact matches. **Ungrounded arguments stayed at 0%.**
 
-The full method walkthrough is in [docs/blog.md](docs/blog.md). The sections below cover the checker order, the shared-prefix DPO trap, the lab setup, and the held-out transition matrix.
+The sections below cover the checker order, the shared-prefix DPO trap, the lab setup, and the held-out transition matrix.
 
 ## Checker order
 
